@@ -2,35 +2,28 @@ function optGon(m)
 % Input:
 %     m — an integer m ≥ 3 with an odd factor
 % Output:
-%     all tight frames (m-vector sets)
-%     that achieve the optimal phase retrieval stability constant, as well as the 
-%     corresponding optimal convex m-polygons
+%     (1) all optimal tight frames (m-vector sets) in R^2
+%         that achieve the minimal condition number
+%         for the stability of phase retrieval;
+%     (2) all optimal convex m-polygons in R^2
+%         for the perimeter-maximizing isodiametric problem
 
 clc
 
 % ——————— 1. Computation of all results ————————
 tic
-% angleSets: the counterclockwise angles of all optimal polygons, 
-%            s×m matrix. Each row corresponds to the set of 
-%            the counterclockwise angles of one optimal polygon, 
-%            from e_1 to e_i, i=1,...,m.
-%
-% vectorSets: all optimal tight frames, 
-%             2×m×s matrix. Each slice (a 2×m matrix) corresponds to 
-%             one optimal tight frame.
-[angleSets,vectorSets] = allOptPolygons(m);
+[edgeVectorSets,frameVectorSets] = allOptPolygons(m);
 toc
 
 % ——————— 2. Visualization (optimal convex polygons) ————————
-s = size(angleSets,1);
-cols = lines(s);
-ncol = ceil(sqrt(s));
-nrow = ceil(s/ncol);
+S = size(edgeVectorSets,3);
+cols = lines(S);
+ncol = ceil(sqrt(S));
+nrow = ceil(S/ncol);
 
 figure('Name','All optimal convex m-gons','Color','w');
-for k = 1:s
-    th = angleSets(k,:);
-    E = [cos(th(:)), sin(th(:))];   % m×2
+for k = 1:S
+    E = edgeVectorSets(:,:,k)';   % m×2
     V = [0,0];
     for j = 1:m
         V(end+1,:) = V(end,:) + E(j,:);
@@ -40,165 +33,280 @@ for k = 1:s
     axis equal off
     title(sprintf('%d', k))
 end
-sgtitle(sprintf('All optimal convex %d-gons (num: %d)', m, s));
+sgtitle(sprintf('All optimal convex %d-gons (num: %d)', m, S));
 
 % ——————— 3. Visualization (optimal tight frames) ————————
-plotVectorSetsTri(vectorSets, 'ColorMode','single','ShowIndex',true);
+plotVectorSetsTri(frameVectorSets, 'ColorMode','single','ShowIndex',true);
 
 end
 
 
-%% Function 0
-function K = giveAnOptIntlist(m)
+
+%% ---------- Auxiliary Function 1 ----------
+function [edgeVectorSets,frameVectorSets] = allOptPolygons(m,fmtDecimals)
+% Find all distinct optimal convex m-gons
+% and all distinct optimal tight frames (m-vector sets)
+% obtained by solving Problem \ref{pr}, the partition of roots of unity problem
+%
+% Note: Polygons that differ only by scaling, translation, rotation, flip,
+%       or their combination are considered equivalent.
+%
 % Input:
 %     m — an integer m ≥ 3 with an odd factor
+%     fmtDecimals — Tolerance for detecting zero-sum (optional, default 1e-12)
+%
 % Output:
-%     K — an integer list K = [k_1,...,k_r] corresponding to a certain 
-%         optimal convex m-gon, where r denotes the smallest odd 
-%         prime factor of m, and k_1 = ... = k_r = m / r
+%   edgeVectorSets — edge vector sets of all optimal polygons, 2×m×s matrix.
+%                    Each slice (2×m matrix) corresponds to the edge vectors
+%                    arranged counterclockwise of one optimal m-gon.
+%
+%   frameVectorSets — all optimal tight frames, 2×m×s matrix.
+%                     Each slice (2×m matrix) corresponds to
+%                     one optimal tight frame in R^2 with m vectors
 
-
-if m < 3 || floor(m) ~= m
+% Input checks
+if ~(isscalar(m) && m>=3 && m==floor(m))
     error('The input parameter m must be a positive integer with m ≥ 3!');
 end
-
 mm = m;
 while mod(mm, 2) == 0
     mm = mm / 2;
 end
-
 if mm == 1
-    error('The input parameter m must admit at least one odd factor!');
+    error('The input parameter m must have at least one odd factor!');
 end
 
-r = mm;
-for k = 3:2:floor(sqrt(mm))
-    if mod(mm, k) == 0
-        r = k;
+if nargin < 2 || isempty(fmtDecimals)
+    fmtDecimals = 12;
+end
+
+% Find all solutions of the partition of roots of unity problem
+partition_sols = find_eqPartition(m, fmtDecimals);
+
+% Turn into opt gons and opt frames
+S = size(partition_sols,1);
+fprintf('Found %d distinct optimal convex %d-gons.\n', S, m);
+fprintf('Found %d distinct optimal tight frames (%d-vector sets).\n', S, m);
+edgeVectorSets = zeros(2,m,S);
+frameVectorSets = zeros(2,m,S);
+for k = 1:S
+    eps = partition_sols(k,:);
+    th = zeros(1,m);
+    for j=1:m
+        if eps(j) == 1
+            th(j) = (j-1)*pi/m;
+        else
+            th(j) = (j-1)*pi/m + pi;
+        end
     end
+    th = sort(th);
+    edgeVectorSets(:,:,k) = [cos(th);sin(th)];
+    frameVectorSets(:,:,k) = [cos(th/2);sin(th/2)];
 end
-K = ones(1,r)*m/r;
+
 end
 
 
-%% Function 1
-function angInt = giveAngles(m,K)
+
+%% ---------- Auxiliary Function 2 ----------
+function solutions = find_eqPartition(m, fmtDecimals)
 % Input:
-%     m — an integer m ≥ 3 with an odd factor
-%     K — an integer list K = [k_1,...,k_r] corresponding to an 
-%         optimal convex m-gon
+%     m — an integer m ≥ 3
+%     fmtDecimals — Tolerance for detecting zero-sum (optional, default 1e-12)
 % Output:
-%     angInt — 1×m matrix, the counterclockwise angles of the 
-%              optimal convex polygon associated with the list K,
-%              from e_1 to e_i, i=1,...,m, normalized by (π/m)
-
-r = length(K);
-angInt = zeros(1,m);
-angInt(1:K(1)) = 0:(-1+K(1));
-angInt((K(1)+1):sum(K(1:2))) = (m+K(1)):(m-1+sum(K(1:2)));
-for i = 2:(r-1)/2
-    angInt((sum(K(1:(2*i-2)))+1):sum(K(1:(2*i-1)))) = ...
-        sum(K(1:(2*i-2))):(-1+sum(K(1:(2*i-1))));
-    angInt((sum(K(1:(2*i-1)))+1):sum(K(1:(2*i)))) = ...
-        (m+sum(K(1:(2*i-1)))):(m-1+sum(K(1:(2*i))));
-end
-angInt((sum(K(1:(r-1)))+1):sum(K(1:r))) = ...
-    sum(K(1:(r-1))):(-1+sum(K(1:r)));
-% angInt = angInt*pi/m;
-angInt = sort(angInt);
-end
-
-
-%% Function 2 (main)
-function [angleSets,vectorSets] = allOptPolygons(m, tol)
-% Find all distinct optimal convex m-gons obtained by "reversing"
-% all edge vectors in a zero-sum edge vector subset of 
-% a given optimal convex m-gon (see Lemma 4.2)
+%     All vectors eps = (eps_0,...,eps_{m-1})^T with eps_j in {+1,-1}
+%     such that g(eps) = sum_{j=0}^{m-1} eps_j * zeta_m^j = 0,
+%     where zeta_m = exp(1i*pi/m)
 %
-% Note: Polygons that differ only by translations, rotations, flips, 
-%   or their combination are considered equivalent.
+% Notes:
+% - The code supports two modes: for small m (default m<=22) it uses brute-force
+%   enumeration (2^m). For larger m it uses a meet-in-the-middle (MITM)
+%   strategy to reduce time complexity to roughly O(2^{m/2}).
+% - Found solutions are merged according to the equivalence relations given in
+%   the paper. The canonical representative of each equivalence class is chosen 
+%   as the lexicographically smallest binary string obtained by encoding +1 -> '1', -1 -> '0'.
 %
-% Input:
-%     m — an integer m ≥ 3 with an odd factor
-%     tol — Tolerance for detecting a zero-sum vector set (optional, default 1e-8)
+% Usage example:
+% partition_sols = find_eqPartition(m, fmtDecimals);
 %
-% Output:
-%   angleSets  — the counterclockwise angles of all optimal polygons, 
-%            s×m matrix. Each row corresponds to the set of 
-%            the counterclockwise angles of one optimal polygon, 
-%            from e_1 to e_i, i=1,...,m.
-%   vectorSets — all optimal tight frames, 
-%             2×m×s matrix. Each slice (a 2×m matrix) corresponds to 
-%             one optimal tight frame.
+% Caution:
+% - For large m (e.g. m>30) the search space can still be very large and may
+%   require substantial time and memory. Adjust your resources accordingly.
 
-if nargin < 2
-    tol = 1e-8;
+% default parameters
+if nargin < 2 || isempty(fmtDecimals)
+    fmtDecimals = 12;
 end
 
-%% 0) Generate an initial optimal convex m-gon, normalize, add it to the result list
-K = giveAnOptIntlist(m);
-theta0Int = giveAngles(m,K);
-theta0Int = mod(theta0Int - theta0Int(1), 2*m);
-theta0Int = sort(theta0Int);
-thetaIntSets = theta0Int;
+% input checks
+if ~(isscalar(m) && m>=3 && m==floor(m))
+    error('The input parameter m must be a positive integer with m ≥ 3!');
+end
+mm = m;
+while mod(mm, 2) == 0
+    mm = mm / 2;
+end
+if mm == 1
+    error('The input parameter m must have at least one odd factor!');
+end
 
-%% 1) Construct the edge vectors E_j = [cosθ_j; sinθ_j]
-E = [cos(theta0Int(:)*pi/m), sin(theta0Int(:)*pi/m)];  % m×2
+zeta = exp(1i*pi/m); % zeta_m
+idx = 0:(m-1);
+% method selection: brute force for small m, MITM otherwise
+if m <= 22
+    method = 'bruteforce';
+else
+    method = 'mitm';
+end
 
-%% 2) Enumerate all subsets I (excluding ∅ and the full set)
-AI = 1:m;
-for mask = 1:(2^m - 2)
-    I = logical(bitget(mask, 1:m));
-    % Verify if the sum of the subset equals the zero vector
-    if norm(sum(E(I, :), 1)) < tol
-        AII = AI(I);
-        fprintf('[');fprintf('%d,', AII(1:end-1));
-        fprintf('%d', AII(end));fprintf(']');fprintf('\n');
-        % reversing all edge vectors in I
-        theta = theta0Int;
-        theta(I) = mod(theta0Int(I) + m, 2*m);
-        theta = mod(theta - theta(1), 2*m);
-        theta = sort(theta);
-        % Remove polygons that are equivalent under 
-        % translations, rotations, flips, or any combination thereof
-        flag = 1;
-        for j=1:size(thetaIntSets,1)
-            for i = 1:m
-                theta_C = mod(theta - theta(i), 2*m);
-                theta_C = sort(theta_C);
-                theta_Cflip = mod(-theta_C, 2*m);
-                theta_Cflip = sort(theta_Cflip);
-                if (norm(theta_C-thetaIntSets(j,:), 1) < tol)...
-                        || (norm(theta_Cflip-thetaIntSets(j,:), 1) < tol)
-                    flag = 0;
-                    break;
+switch method
+    case 'bruteforce'
+        N = 2^m;
+        sols = zeros(0, m);
+        cnt = 0;
+        for mask = 0:(N-1)
+            bits = bitget(mask, 1:m); % 1/0
+            eps = 2*bits - 1; % {+1,-1}
+            s = sum(eps .* (zeta .^ idx));
+            if abs(real(s)) < 10^(-fmtDecimals) && abs(imag(s)) < 10^(-fmtDecimals)
+                cnt = cnt + 1;
+                sols(cnt, :) = eps;
+            end
+        end
+    case 'mitm'
+        n1 = floor(m/2);
+        n2 = m - n1;
+        idx1 = 0:(n1-1);
+        idx2 = n1:(m-1);
+        N1 = 2^n1;
+        N2 = 2^n2;
+        map = containers.Map();
+        for mask = 0:(N2-1)
+            bits = bitget(mask, 1:n2);
+            eps2 = 2*bits - 1; % n2
+            s2 = sum(eps2 .* (zeta .^ idx2));
+            key = complex_key(s2, fmtDecimals);
+            if isKey(map, key)
+                list = map(key);
+                list{end+1} = eps2; %#ok<AGROW>
+                map(key) = list;
+            else
+                map(key) = {eps2};
+            end
+        end
+        sols = zeros(0, m);
+        cnt = 0;
+        for mask = 0:(N1-1)
+            bits = bitget(mask, 1:n1);
+            eps1 = 2*bits - 1; % n1
+            s1 = sum(eps1 .* (zeta .^ idx1));
+            target = -s1;
+            keyt = complex_key(target, fmtDecimals);
+            if isKey(map, keyt)
+                list = map(keyt);
+                for k = 1:numel(list)
+                    eps2 = list{k};
+                    eps = [eps1, eps2];
+                    cnt = cnt + 1;
+                    sols(cnt, :) = eps;
                 end
             end
-            if flag == 0
-                break;
-            end
         end
-        if flag == 1
-            thetaIntSets = [thetaIntSets; theta];
+    otherwise
+        error('Unknown method');
+end
+
+% fprintf('Found %d candidate sequences (before merging equivalence classes)\n', size(sols,1));
+
+% Merge solutions according to the paper's equivalence relations and keep
+% one canonical representative per equivalence class
+canonical_map = containers.Map();
+for i = 1:size(sols,1)
+    eps = sols(i,:);
+    crep = canonical_rep(eps);
+    if ~isKey(canonical_map, crep)
+        canonical_map(crep) = eps; % store one representative for this class
+    end
+end
+keysList = keys(canonical_map);
+S = numel(keysList);
+solutions = zeros(S, m);
+for i = 1:S
+    eps_temp = canonical_map(keysList{i});
+    if eps_temp(1) == -1
+        eps_temp = -eps_temp;
+    end
+    solutions(i,:) = eps_temp;
+end
+% fprintf('After merging, %d equivalence classes remain\n', S);
+end
+
+
+function key = complex_key(c, decimals)
+fmt = sprintf('%%.%df_%%.%df', decimals, decimals);
+key = sprintf(fmt, real(c), imag(c));
+end
+
+function crep = canonical_rep(eps)
+% Compute a canonical representative string for the equivalence class of
+% eps under the operations: shift S_k (including k=0 as "no shift"),
+% reversal R, and global sign flip alpha ∈ {−1,+1}.
+% The canonical representative is the lexicographically smallest binary
+% string obtained by encoding +1 -> '1' and -1 -> '0'.
+m = numel(eps);
+bestStr = '';
+ks = [0, 1:(m-1)];
+for k = ks
+    for applyR = 0:1
+        for alpha = [-1, 1]
+            e = eps;
+            if k > 0
+                e = S_k(e, k);
+            end
+            if applyR == 1
+                e = R_op(e);
+            end
+            e = alpha * e;
+            s = vec_to_binstr(e);
+            if isempty(bestStr)
+                bestStr = s;
+            else
+                % lexicographic comparison
+                C = sort({bestStr, s});
+                if strcmp(C{1}, s)
+                    bestStr = s;
+                end
+            end
         end
     end
 end
-%% 3) Show results
-angleSets = thetaIntSets*pi/m;
-s = size(angleSets,1);
-% clc;
-fprintf('Found %d distinct optimal convex %d-gons.\n', s, m);
-fprintf('Found %d distinct optimal %d-vector sets (tight frames).\n', s, m);
-vectorSets = zeros(2,m,s);
-for i = 1:s
-    vectorSets(:,:,i) = [cos(angleSets(i,:)/2);sin(angleSets(i,:)/2)];
+crep = bestStr;
 end
+
+function s = vec_to_binstr(e)
+s = repmat('0', 1, numel(e));
+s(e==1) = '1';
+end
+
+function y = R_op(x)
+y = x(end:-1:1);
+end
+
+function y = S_k(x, k)
+m = numel(x);
+if k < 0 || k >= m
+    error('In S_k, k must satisfy 1 <= k <= m-1');
+end
+y = zeros(size(x));
+y(1:(m-k)) = x((1+k):m);
+y((m-k+1):m) = -x(1:k);
 end
 
 
-%% Function 3
+
+%% ---------- Auxiliary Function 3 ----------
 function plotVectorSetsTri(vectorSets, varargin)
-% Plot a 2×m×s vector set with arrows represented 
+% Plot a 2×m×s vector set with arrows represented
 % by line segments and small triangular heads
 %
 % plotVectorSetsTri(vectorSets)
@@ -211,25 +319,25 @@ function plotVectorSetsTri(vectorSets, varargin)
 %   'AxisUnified'     - logical, whether to unify axes across all subplots (default: true)
 %   'Decimals'        - number of decimal places for coordinate display (default: 3)
 %   'ShowIndex'       - logical, whether to display only indices instead of vector values (default: false)
-%   'PlotScale'       - scale factor for vector lengths during plotting 
+%   'PlotScale'       - scale factor for vector lengths during plotting
 %                       (does not affect displayed labels) (default: 1)
 %   'LineWidth'       - width of the line segments (default: 1.2)
 %   'HeadLength'      - arrowhead length as a fraction of vector length (0-1) (default: 0.08)
 %   'HeadWidth'       - arrowhead width as a fraction of vector length (0-1) (default: 0.06)
 %   'FillHeads'       - logical, whether to fill the arrowhead triangles (default: true)
 %   'MarkerOriginSize'- size of the origin marker (default: 6)
-%   'ColorMode'       - 'byIndex' (each vector has a different color) or 
+%   'ColorMode'       - 'byIndex' (each vector has a different color) or
 %                       'single' (all vectors same color) (default: 'byIndex')
-%   'BaseColor'       - RGB triplet or MATLAB color used when ColorMode='single' 
+%   'BaseColor'       - RGB triplet or MATLAB color used when ColorMode='single'
 %                       (default: [0 0.4470 0.7410])
 %
 % Example:
 %   plotVectorSetsTri(vectorSets, 'HeadLength',0.10, 'HeadWidth',0.06, 'PlotScale',0.85);
 %
 % Notes:
-%   - HeadLength and HeadWidth are relative 
+%   - HeadLength and HeadWidth are relative
 %     to the vector length (shorter vectors have proportionally shorter heads)
-%   - Very short vectors are automatically shortened 
+%   - Very short vectors are automatically shortened
 %     or represented as points to avoid distorted triangles
 %
 % ---------------- Parameter Parsing ----------------
@@ -385,4 +493,3 @@ end
 set(gcf,'Color','w');
 
 end
-
